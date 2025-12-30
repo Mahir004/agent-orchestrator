@@ -5,8 +5,12 @@ import { TopAgentsTable } from "@/components/dashboard/TopAgentsTable";
 import { PendingApprovalsCard } from "@/components/dashboard/PendingApprovalsCard";
 import { SystemHealthCard } from "@/components/dashboard/SystemHealthCard";
 import { Bot, CheckCircle, Clock, AlertTriangle, DollarSign, Activity } from "lucide-react";
+import { useDashboardStats } from "@/hooks/useDashboardStats";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Dashboard() {
+  const { stats, loading } = useDashboardStats();
+
   return (
     <MainLayout title="Dashboard">
       <div className="space-y-6">
@@ -18,54 +22,62 @@ export default function Dashboard() {
 
         {/* Metric Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <MetricCard
-            title="Active Agents"
-            value={24}
-            change="+3 from yesterday"
-            changeType="positive"
-            icon={Bot}
-            iconColor="primary"
-          />
-          <MetricCard
-            title="Tasks Completed"
-            value="1,247"
-            change="+18% this week"
-            changeType="positive"
-            icon={CheckCircle}
-            iconColor="success"
-          />
-          <MetricCard
-            title="Pending Approval"
-            value={12}
-            change="3 high priority"
-            changeType="neutral"
-            icon={Clock}
-            iconColor="warning"
-          />
-          <MetricCard
-            title="Failed Tasks"
-            value={3}
-            change="-2 from yesterday"
-            changeType="positive"
-            icon={AlertTriangle}
-            iconColor="destructive"
-          />
-          <MetricCard
-            title="Today's Cost"
-            value="₹4,520"
-            change="Within budget"
-            changeType="positive"
-            icon={DollarSign}
-            iconColor="primary"
-          />
-          <MetricCard
-            title="Avg Response"
-            value="1.2s"
-            change="-0.3s improved"
-            changeType="positive"
-            icon={Activity}
-            iconColor="success"
-          />
+          {loading ? (
+            Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-32" />
+            ))
+          ) : (
+            <>
+              <MetricCard
+                title="Active Agents"
+                value={stats.activeAgents}
+                change={`${stats.activeAgents} running`}
+                changeType="positive"
+                icon={Bot}
+                iconColor="primary"
+              />
+              <MetricCard
+                title="Tasks Completed"
+                value={stats.completedTasks.toLocaleString()}
+                change={`${stats.successRate}% success rate`}
+                changeType="positive"
+                icon={CheckCircle}
+                iconColor="success"
+              />
+              <MetricCard
+                title="Pending Approval"
+                value={stats.pendingApprovals}
+                change={stats.pendingApprovals > 0 ? "Needs attention" : "All clear"}
+                changeType={stats.pendingApprovals > 0 ? "neutral" : "positive"}
+                icon={Clock}
+                iconColor="warning"
+              />
+              <MetricCard
+                title="Failed Tasks"
+                value={stats.failedTasks}
+                change={stats.failedTasks === 0 ? "No failures" : "Review needed"}
+                changeType={stats.failedTasks === 0 ? "positive" : "negative"}
+                icon={AlertTriangle}
+                iconColor="destructive"
+              />
+              <MetricCard
+                title="Today's Cost"
+                value={`₹${stats.costToday.toFixed(2)}`}
+                change="Within budget"
+                changeType="positive"
+                icon={DollarSign}
+                iconColor="primary"
+              />
+              <MetricCard
+                title="Tasks Today"
+                value={stats.tasksToday}
+                change="Active processing"
+                changeType="positive"
+                icon={Activity}
+                iconColor="success"
+              />
+            </>
+          )}
         </div>
 
         {/* Charts and Tables */}
