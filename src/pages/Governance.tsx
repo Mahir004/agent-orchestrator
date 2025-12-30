@@ -4,52 +4,50 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Shield, AlertTriangle, Lock, Globe, Zap, Settings } from "lucide-react";
+import { usePolicyRules } from "@/hooks/usePolicyRules";
+import { useKillSwitches } from "@/hooks/useKillSwitches";
+import { useAuth } from "@/hooks/useAuth";
+import { Skeleton } from "@/components/ui/skeleton";
 
-const policyRules = [
-  {
-    id: 1,
-    name: "Autonomous Invoice Approval",
-    description: "Allow agents to auto-approve invoices under ₹10,000",
-    enabled: true,
-    category: "financial"
-  },
-  {
-    id: 2,
-    name: "Vendor Data Modification Lock",
-    description: "Prevent agents from modifying vendor master data",
-    enabled: true,
-    category: "data"
-  },
-  {
-    id: 3,
-    name: "Human-in-the-Loop for Contracts",
-    description: "Require human approval for any contract modifications",
-    enabled: true,
-    category: "approval"
-  },
-  {
-    id: 4,
-    name: "Region-Based Data Access",
-    description: "Restrict data access based on geographic regions",
-    enabled: false,
-    category: "compliance"
-  },
-  {
-    id: 5,
-    name: "Model Usage Restrictions",
-    description: "Limit certain models for sensitive data processing",
-    enabled: true,
-    category: "security"
-  },
-];
-
-const killSwitches = [
-  { name: "Finance Agents", status: "active", agents: 5 },
-  { name: "HR Agents", status: "active", agents: 3 },
-  { name: "All Agents", status: "active", agents: 24 },
-];
+const categoryIcons: Record<string, typeof Zap> = {
+  financial: Zap,
+  data: Lock,
+  approval: Shield,
+  compliance: Globe,
+  security: Lock,
+};
 
 export default function Governance() {
+  const { policyRules, loading: policiesLoading, toggleRule } = usePolicyRules();
+  const { killSwitches, loading: killSwitchesLoading, activateKillSwitch } = useKillSwitches();
+  const { user } = useAuth();
+
+  const loading = policiesLoading || killSwitchesLoading;
+
+  const handleToggleRule = async (id: string, currentEnabled: boolean) => {
+    await toggleRule(id, !currentEnabled);
+  };
+
+  const handleEmergencyStop = async (id: string) => {
+    if (user) {
+      await activateKillSwitch(id, user.id);
+    }
+  };
+
+  if (loading) {
+    return (
+      <MainLayout title="Governance & Safety">
+        <div className="space-y-6">
+          <p className="text-muted-foreground">Configure approval thresholds, safety boundaries, and compliance policies</p>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Skeleton className="h-64" />
+            <Skeleton className="col-span-2 h-64" />
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
+
   return (
     <MainLayout title="Governance & Safety">
       <div className="space-y-6">
@@ -65,17 +63,28 @@ export default function Governance() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {killSwitches.map((item) => (
-                <div key={item.name} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
-                  <div>
-                    <p className="font-medium text-foreground">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">{item.agents} agents</p>
-                  </div>
-                  <Button variant="destructive" size="sm">
-                    Emergency Stop
-                  </Button>
-                </div>
-              ))}
+              {killSwitches.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No kill switches configured</p>
+              ) : (
+                killSwitches.map((item) => {
+                  const targetIds = (item.target_ids as string[] | null) || [];
+                  return (
+                    <div key={item.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
+                      <div>
+                        <p className="font-medium text-foreground">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">{targetIds.length} agents</p>
+                      </div>
+                      <Button 
+                        variant={item.is_active ? "outline" : "destructive"} 
+                        size="sm"
+                        onClick={() => handleEmergencyStop(item.id)}
+                      >
+                        {item.is_active ? "Active" : "Emergency Stop"}
+                      </Button>
+                    </div>
+                  );
+                })
+              )}
             </CardContent>
           </Card>
 
@@ -92,24 +101,30 @@ export default function Governance() {
               </Button>
             </CardHeader>
             <CardContent className="space-y-4">
-              {policyRules.map((rule) => (
-                <div key={rule.id} className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border border-border">
-                  <div className="flex items-start gap-4">
-                    <div className="mt-1">
-                      {rule.category === "financial" && <Zap className="w-5 h-5 text-warning" />}
-                      {rule.category === "data" && <Lock className="w-5 h-5 text-destructive" />}
-                      {rule.category === "approval" && <Shield className="w-5 h-5 text-primary" />}
-                      {rule.category === "compliance" && <Globe className="w-5 h-5 text-success" />}
-                      {rule.category === "security" && <Lock className="w-5 h-5 text-primary" />}
+              {policyRules.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No policies configured</p>
+              ) : (
+                policyRules.map((rule) => {
+                  const IconComponent = categoryIcons[rule.category] || Shield;
+                  return (
+                    <div key={rule.id} className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border border-border">
+                      <div className="flex items-start gap-4">
+                        <div className="mt-1">
+                          <IconComponent className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-foreground">{rule.name}</p>
+                          <p className="text-sm text-muted-foreground">{rule.description}</p>
+                        </div>
+                      </div>
+                      <Switch 
+                        checked={rule.enabled} 
+                        onCheckedChange={() => handleToggleRule(rule.id, rule.enabled)}
+                      />
                     </div>
-                    <div>
-                      <p className="font-medium text-foreground">{rule.name}</p>
-                      <p className="text-sm text-muted-foreground">{rule.description}</p>
-                    </div>
-                  </div>
-                  <Switch checked={rule.enabled} />
-                </div>
-              ))}
+                  );
+                })
+              )}
             </CardContent>
           </Card>
         </div>

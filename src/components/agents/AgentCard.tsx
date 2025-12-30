@@ -15,23 +15,25 @@ interface AgentCardProps {
   id: string;
   name: string;
   role: string;
-  status: "running" | "paused" | "error";
+  status: "running" | "paused" | "error" | "stopped";
   model: string;
   tasksToday: number;
   costPerTask: string;
-  autonomyLevel: "full" | "supervised" | "manual";
+  autonomyLevel: "full" | "supervised" | "manual" | "approval_required";
 }
 
 const statusStyles = {
   running: "bg-success/10 text-success border-success/20 glow-success",
   paused: "bg-warning/10 text-warning border-warning/20",
   error: "bg-destructive/10 text-destructive border-destructive/20 glow-destructive",
+  stopped: "bg-muted text-muted-foreground",
 };
 
 const autonomyStyles = {
   full: "bg-primary/10 text-primary",
   supervised: "bg-warning/10 text-warning",
   manual: "bg-muted text-muted-foreground",
+  approval_required: "bg-destructive/10 text-destructive",
 };
 
 export function AgentCard({
