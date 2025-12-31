@@ -1,17 +1,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { 
+  authenticateRequest, 
+  isTeamMember, 
+  corsHeaders, 
+  unauthorizedResponse, 
+  forbiddenResponse,
+  badRequestResponse,
+  z 
+} from "../_shared/auth.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-interface TaskRequest {
-  agentId: string;
-  taskId?: string;
-  action: "execute" | "retry" | "cancel";
-  input?: Record<string, unknown>;
-}
+const TaskRequestSchema = z.object({
+  agentId: z.string().uuid(),
+  taskId: z.string().uuid().optional(),
+  action: z.enum(["execute", "retry", "cancel"]),
+  input: z.record(z.unknown()).optional(),
+});
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -19,13 +23,32 @@ serve(async (req) => {
   }
 
   try {
+    // Authenticate request
+    const { user, error: authError } = await authenticateRequest(req);
+    if (authError || !user) {
+      return unauthorizedResponse(authError || "Unauthorized");
+    }
+
+    // Check if user is a team member
+    const isMember = await isTeamMember(user.id);
+    if (!isMember) {
+      return forbiddenResponse("User is not a team member");
+    }
+
+    // Validate request body
+    const body = await req.json();
+    const parsed = TaskRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return badRequestResponse("Invalid request body");
+    }
+
+    const { agentId, taskId, action, input } = parsed.data;
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { agentId, taskId, action, input } = await req.json() as TaskRequest;
-
-    console.log(`[Agent Runtime] Action: ${action}, Agent: ${agentId}, Task: ${taskId}`);
+    console.log(`[Agent Runtime] Action: ${action}, Agent: ${agentId}, Task: ${taskId}, User: ${user.id}`);
 
     // Get agent configuration
     const { data: agent, error: agentError } = await supabase
@@ -53,13 +76,21 @@ serve(async (req) => {
     let task;
 
     if (action === "execute") {
+      // Sanitize input title and description
+      const sanitizedTitle = typeof input?.title === "string" 
+        ? input.title.slice(0, 200) 
+        : "New Task";
+      const sanitizedDescription = typeof input?.description === "string" 
+        ? input.description.slice(0, 2000) 
+        : "";
+
       // Create new task
       const { data: newTask, error: taskError } = await supabase
         .from("tasks")
         .insert({
           agent_id: agentId,
-          title: input?.title || "New Task",
-          description: input?.description || "",
+          title: sanitizedTitle,
+          description: sanitizedDescription,
           status: "in_progress",
           input_data: input,
           started_at: new Date().toISOString(),
@@ -73,14 +104,14 @@ serve(async (req) => {
       }
       task = newTask;
 
-      // Log audit event
+      // Log audit event with authenticated user
       await supabase.rpc("log_audit_event", {
-        p_actor_type: "agent",
-        p_actor_id: agentId,
+        p_actor_type: "user",
+        p_actor_id: user.id,
         p_action: "task_started",
         p_resource_type: "task",
         p_resource_id: task.id,
-        p_details: { input },
+        p_details: { agent_id: agentId },
         p_severity: "info",
       });
 
@@ -165,7 +196,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("[Agent Runtime] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: "An error occurred" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

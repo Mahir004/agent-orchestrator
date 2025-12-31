@@ -12,15 +12,11 @@ export function PendingApprovalsCard() {
   const { user } = useAuth();
 
   const handleApprove = async (id: string) => {
-    if (user) {
-      await approveRequest(id, user.id);
-    }
+    await approveRequest(id);
   };
 
   const handleReject = async (id: string) => {
-    if (user) {
-      await rejectRequest(id, user.id);
-    }
+    await rejectRequest(id);
   };
 
   if (loading) {
