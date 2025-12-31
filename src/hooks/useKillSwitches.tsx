@@ -50,9 +50,9 @@ export function useKillSwitches() {
     setLoading(false);
   };
 
-  const activateKillSwitch = async (id: string, userId: string) => {
+  const activateKillSwitch = async (id: string, reason?: string) => {
     const { error } = await supabase.functions.invoke("kill-switch", {
-      body: { killSwitchId: id, action: "activate", userId },
+      body: { killSwitchId: id, action: "activate", reason },
     });
 
     if (error) {
@@ -62,9 +62,9 @@ export function useKillSwitches() {
     toast.success("Kill switch activated - agents stopped");
   };
 
-  const deactivateKillSwitch = async (id: string, userId: string) => {
+  const deactivateKillSwitch = async (id: string) => {
     const { error } = await supabase.functions.invoke("kill-switch", {
-      body: { killSwitchId: id, action: "deactivate", userId },
+      body: { killSwitchId: id, action: "deactivate" },
     });
 
     if (error) {

@@ -1,17 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { 
+  authenticateRequest, 
+  checkUserRole, 
+  corsHeaders, 
+  unauthorizedResponse, 
+  forbiddenResponse,
+  badRequestResponse,
+  z 
+} from "../_shared/auth.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-interface ApprovalRequest {
-  approvalId: string;
-  action: "approve" | "reject";
-  userId: string;
-  reason?: string;
-}
+const ApprovalRequestSchema = z.object({
+  approvalId: z.string().uuid(),
+  action: z.enum(["approve", "reject"]),
+  reason: z.string().max(1000).optional(),
+});
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -19,13 +22,33 @@ serve(async (req) => {
   }
 
   try {
+    // Authenticate request
+    const { user, error: authError } = await authenticateRequest(req);
+    if (authError || !user) {
+      return unauthorizedResponse(authError || "Unauthorized");
+    }
+
+    // Check if user has approval permissions (admin or ops_manager)
+    const isAdmin = await checkUserRole(user.id, "admin");
+    const isOpsManager = await checkUserRole(user.id, "ops_manager");
+    if (!isAdmin && !isOpsManager) {
+      return forbiddenResponse("User not authorized to manage approvals");
+    }
+
+    // Validate request body
+    const body = await req.json();
+    const parsed = ApprovalRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return badRequestResponse("Invalid request body");
+    }
+
+    const { approvalId, action, reason } = parsed.data;
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { approvalId, action, userId, reason } = await req.json() as ApprovalRequest;
-
-    console.log(`[Approvals] Action: ${action}, Approval: ${approvalId}, User: ${userId}`);
+    console.log(`[Approvals] Action: ${action}, Approval: ${approvalId}, User: ${user.id}`);
 
     // Get approval request
     const { data: approval, error: approvalError } = await supabase
@@ -48,10 +71,10 @@ serve(async (req) => {
       );
     }
 
-    // Update approval status
+    // Update approval status with authenticated user ID
     const updateData: Record<string, unknown> = {
       status: action === "approve" ? "approved" : "rejected",
-      approved_by: userId,
+      approved_by: user.id,
       approved_at: new Date().toISOString(),
     };
 
@@ -66,10 +89,10 @@ serve(async (req) => {
 
     if (updateError) throw updateError;
 
-    // Log audit event
+    // Log audit event with authenticated user ID
     await supabase.rpc("log_audit_event", {
       p_actor_type: "user",
-      p_actor_id: userId,
+      p_actor_id: user.id,
       p_action: action === "approve" ? "approval_granted" : "approval_denied",
       p_resource_type: "approval",
       p_resource_id: approvalId,
@@ -129,7 +152,7 @@ serve(async (req) => {
         .eq("id", approval.task_id);
     }
 
-    console.log(`[Approvals] Approval ${approvalId} ${action}d by ${userId}`);
+    console.log(`[Approvals] Approval ${approvalId} ${action}d by ${user.id}`);
 
     return new Response(
       JSON.stringify({ 
@@ -141,7 +164,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("[Approvals] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: "An error occurred" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

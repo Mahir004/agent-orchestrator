@@ -50,9 +50,9 @@ export function useApprovals() {
     setLoading(false);
   };
 
-  const approveRequest = async (approvalId: string, userId: string) => {
+  const approveRequest = async (approvalId: string) => {
     const { error } = await supabase.functions.invoke("approvals", {
-      body: { approvalId, action: "approve", userId },
+      body: { approvalId, action: "approve" },
     });
 
     if (error) {
@@ -62,9 +62,9 @@ export function useApprovals() {
     toast.success("Request approved");
   };
 
-  const rejectRequest = async (approvalId: string, userId: string, reason?: string) => {
+  const rejectRequest = async (approvalId: string, reason?: string) => {
     const { error } = await supabase.functions.invoke("approvals", {
-      body: { approvalId, action: "reject", userId, reason },
+      body: { approvalId, action: "reject", reason },
     });
 
     if (error) {

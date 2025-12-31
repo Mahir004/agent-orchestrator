@@ -1,17 +1,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { 
+  authenticateRequest, 
+  isTeamMember, 
+  corsHeaders, 
+  unauthorizedResponse, 
+  forbiddenResponse,
+  badRequestResponse,
+  z 
+} from "../_shared/auth.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-interface PolicyCheckRequest {
-  agentId: string;
-  action: string;
-  resource: string;
-  context?: Record<string, unknown>;
-}
+const PolicyCheckRequestSchema = z.object({
+  agentId: z.string().uuid(),
+  action: z.string().max(100),
+  resource: z.string().max(200),
+  context: z.record(z.unknown()).optional(),
+});
 
 interface PolicyDecision {
   allowed: boolean;
@@ -26,13 +30,32 @@ serve(async (req) => {
   }
 
   try {
+    // Authenticate request
+    const { user, error: authError } = await authenticateRequest(req);
+    if (authError || !user) {
+      return unauthorizedResponse(authError || "Unauthorized");
+    }
+
+    // Check if user is a team member
+    const isMember = await isTeamMember(user.id);
+    if (!isMember) {
+      return forbiddenResponse("User is not a team member");
+    }
+
+    // Validate request body
+    const body = await req.json();
+    const parsed = PolicyCheckRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return badRequestResponse("Invalid request body");
+    }
+
+    const { agentId, action, resource, context } = parsed.data;
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { agentId, action, resource, context } = await req.json() as PolicyCheckRequest;
-
-    console.log(`[Policy Engine] Checking: Agent ${agentId}, Action: ${action}, Resource: ${resource}`);
+    console.log(`[Policy Engine] Checking: Agent ${agentId}, Action: ${action}, Resource: ${resource}, User: ${user.id}`);
 
     // Get agent details
     const { data: agent, error: agentError } = await supabase
@@ -134,16 +157,15 @@ serve(async (req) => {
 
     // Log policy decision
     await supabase.rpc("log_audit_event", {
-      p_actor_type: "system",
-      p_actor_id: null,
+      p_actor_type: "user",
+      p_actor_id: user.id,
       p_action: "policy_check",
       p_resource_type: "agent",
       p_resource_id: agentId,
       p_details: { 
         action, 
         resource, 
-        decision,
-        context 
+        decision
       },
       p_severity: decision.allowed ? "info" : "warning",
     });
@@ -157,7 +179,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("[Policy Engine] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: "An error occurred" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -1,16 +1,20 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { 
+  authenticateRequest, 
+  checkUserRole, 
+  corsHeaders, 
+  unauthorizedResponse, 
+  forbiddenResponse,
+  badRequestResponse,
+  z 
+} from "../_shared/auth.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-interface WorkflowRequest {
-  workflowId: string;
-  action: "start" | "pause" | "resume" | "cancel";
-  input?: Record<string, unknown>;
-}
+const WorkflowRequestSchema = z.object({
+  workflowId: z.string().uuid(),
+  action: z.enum(["start", "pause", "resume", "cancel"]),
+  input: z.record(z.unknown()).optional(),
+});
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -18,13 +22,33 @@ serve(async (req) => {
   }
 
   try {
+    // Authenticate request
+    const { user, error: authError } = await authenticateRequest(req);
+    if (authError || !user) {
+      return unauthorizedResponse(authError || "Unauthorized");
+    }
+
+    // Check if user has workflow permissions (admin or ai_engineer)
+    const isAdmin = await checkUserRole(user.id, "admin");
+    const isEngineer = await checkUserRole(user.id, "ai_engineer");
+    if (!isAdmin && !isEngineer) {
+      return forbiddenResponse("User not authorized to manage workflows");
+    }
+
+    // Validate request body
+    const body = await req.json();
+    const parsed = WorkflowRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return badRequestResponse("Invalid request body");
+    }
+
+    const { workflowId, action, input } = parsed.data;
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { workflowId, action, input } = await req.json() as WorkflowRequest;
-
-    console.log(`[Orchestration] Action: ${action}, Workflow: ${workflowId}`);
+    console.log(`[Orchestration] Action: ${action}, Workflow: ${workflowId}, User: ${user.id}`);
 
     // Get workflow configuration
     const { data: workflow, error: workflowError } = await supabase
@@ -54,7 +78,7 @@ serve(async (req) => {
           execution_log: [{ 
             timestamp: new Date().toISOString(), 
             event: "workflow_started",
-            input 
+            started_by: user.id
           }],
         })
         .select()
@@ -69,14 +93,14 @@ serve(async (req) => {
         .update({ status: "running" })
         .eq("id", workflowId);
 
-      // Log audit event
+      // Log audit event with authenticated user ID
       await supabase.rpc("log_audit_event", {
-        p_actor_type: "system",
-        p_actor_id: null,
+        p_actor_type: "user",
+        p_actor_id: user.id,
         p_action: "workflow_started",
         p_resource_type: "workflow",
         p_resource_id: workflowId,
-        p_details: { run_id: workflowRun.id, input },
+        p_details: { run_id: workflowRun.id },
         p_severity: "info",
       });
 
@@ -170,7 +194,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("[Orchestration] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: "An error occurred" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

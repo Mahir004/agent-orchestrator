@@ -1,27 +1,35 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { 
+  authenticateRequest, 
+  isTeamMember, 
+  corsHeaders, 
+  unauthorizedResponse, 
+  forbiddenResponse,
+  badRequestResponse,
+  z 
+} from "../_shared/auth.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+const FiltersSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  agentId: z.string().uuid().optional(),
+  department: z.string().max(100).optional(),
+}).optional();
 
-interface TelemetryRequest {
-  action: "get_stats" | "get_costs" | "get_health" | "record_health";
-  filters?: {
-    startDate?: string;
-    endDate?: string;
-    agentId?: string;
-    department?: string;
-  };
-  healthData?: {
-    component: string;
-    status: string;
-    latency_ms?: number;
-    error_rate?: number;
-    details?: Record<string, unknown>;
-  };
-}
+const HealthDataSchema = z.object({
+  component: z.string().max(100),
+  status: z.string().max(50),
+  latency_ms: z.number().int().min(0).max(1000000).optional(),
+  error_rate: z.number().min(0).max(100).optional(),
+  details: z.record(z.unknown()).optional(),
+}).optional();
+
+const TelemetryRequestSchema = z.object({
+  action: z.enum(["get_stats", "get_costs", "get_health", "record_health"]),
+  filters: FiltersSchema,
+  healthData: HealthDataSchema,
+});
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -29,13 +37,32 @@ serve(async (req) => {
   }
 
   try {
+    // Authenticate request
+    const { user, error: authError } = await authenticateRequest(req);
+    if (authError || !user) {
+      return unauthorizedResponse(authError || "Unauthorized");
+    }
+
+    // Check if user is a team member
+    const isMember = await isTeamMember(user.id);
+    if (!isMember) {
+      return forbiddenResponse("User is not a team member");
+    }
+
+    // Validate request body
+    const body = await req.json();
+    const parsed = TelemetryRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return badRequestResponse("Invalid request body");
+    }
+
+    const { action, filters, healthData } = parsed.data;
+
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { action, filters, healthData } = await req.json() as TelemetryRequest;
-
-    console.log(`[Telemetry] Action: ${action}`);
+    console.log(`[Telemetry] Action: ${action}, User: ${user.id}`);
 
     if (action === "get_stats") {
       // Get aggregated statistics
@@ -211,7 +238,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("[Telemetry] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: "An error occurred" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
