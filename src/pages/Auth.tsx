@@ -63,8 +63,21 @@ export default function Auth() {
       toast.error("Please fill in all fields");
       return;
     }
-    if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+    // Strong password validation
+    if (password.length < 12) {
+      toast.error("Password must be at least 12 characters");
+      return;
+    }
+    
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    
+    const complexityCount = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChar].filter(Boolean).length;
+    
+    if (complexityCount < 3) {
+      toast.error("Password must include at least 3 of: uppercase, lowercase, numbers, special characters");
       return;
     }
     setLoading(true);

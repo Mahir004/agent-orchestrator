@@ -7,6 +7,9 @@ import {
   unauthorizedResponse, 
   forbiddenResponse,
   badRequestResponse,
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
   z 
 } from "../_shared/auth.ts";
 
@@ -27,6 +30,12 @@ serve(async (req) => {
     const { user, error: authError } = await authenticateRequest(req);
     if (authError || !user) {
       return unauthorizedResponse(authError || "Unauthorized");
+    }
+
+    // Rate limiting
+    const rateLimit = checkRateLimit(user.id, RATE_LIMITS.toolExecutor);
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit.resetAt);
     }
 
     // Check if user is a team member
